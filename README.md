@@ -1,0 +1,231 @@
+# LlamaFirewall API
+
+A REST API wrapper around LlamaFirewall for scanning user messages for potential security risks.
+
+For requirements, check the official repository: https://github.com/meta-llama/PurpleLlama/tree/main/LlamaFirewall.
+
+Make sure to ask for access to the relevant models here: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M.
+
+## Security and Reliability Features (Dockerfile)
+
+- Non-root user for running the application
+- Resource limits and monitoring
+- Health checks and automatic restarts
+- Secure network configuration
+- Log rotation and management
+- Proper signal handling
+- Regular security updates
+
+## Environment Configuration
+
+The API uses a `.env` file for configuration. Create a `.env` file in the project root with the following variables:
+
+```bash
+# Hugging Face API configuration (required)
+# Get your token from: https://huggingface.co/settings/tokens
+# Make sure you have access to: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M
+HF_TOKEN=your_token_here
+
+# Together API configuration
+TOGETHER_API_KEY=your_api_key_here
+
+# Scanner configuration
+LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD"], "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]}
+
+# Tokenizer configuration
+TOKENIZERS_PARALLELISM=false
+```
+
+You can copy the template file and modify it:
+```bash
+cp .env.template .env
+# Edit .env with your configuration
+```
+
+## Setup
+
+### Local Development
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Create and configure your `.env` file (see Environment Configuration above)
+
+3. Run the API server:
+```bash
+uvicorn api:app --reload
+```
+
+### Docker Deployment
+
+1. Using Docker Compose (Recommended):
+```bash
+# Create and configure your .env file
+cp .env.template .env
+# Edit .env with your configuration
+
+# Start the service
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the service
+docker-compose down
+```
+
+2. Using Docker directly:
+```bash
+# Create and configure your .env file
+cp .env.template .env
+# Edit .env with your configuration
+
+# Build the image
+docker build -t llamafirewall-api .
+
+# Run the container
+docker run --env-file .env -p 8000:8000 llamafirewall-api
+```
+
+### Production Deployment
+
+For production environments, consider the following:
+
+1. Security:
+   - Use Docker secrets for sensitive data
+   - Enable Docker Content Trust
+   - Regularly update base images
+   - Scan images for vulnerabilities
+   - Use HTTPS in production
+   - Implement rate limiting
+
+2. Monitoring:
+   - Monitor container health
+   - Set up logging aggregation
+   - Configure proper alerting
+   - Use Docker Swarm or Kubernetes for orchestration
+
+3. Resource Management:
+   - Adjust resource limits based on your needs
+   - Monitor memory and CPU usage
+   - Configure proper logging rotation
+   - Set up backup strategies
+
+The API will be available at `http://localhost:8000`
+
+## Configuration
+
+### Scanner Configuration
+
+The API allows you to configure which scanners to use for each role through the `LLAMAFIREWALL_SCANNERS` environment variable. The configuration should be a JSON string with the following format:
+
+```json
+{
+    "USER": ["PROMPT_GUARD"],
+    "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]
+}
+```
+
+Available roles:
+- `USER`
+- `ASSISTANT`
+- `SYSTEM`
+
+Available scanner types:
+- `PROMPT_GUARD`
+- `PII_DETECTION`
+- `HIDDEN_ASCII`
+- `AGENT_ALIGNMENT`
+- `CODE_SHIELD`
+
+(for additional scanner types check [ScannerType](https://github.com/meta-llama/PurpleLlama/blob/main/LlamaFirewall/src/llamafirewall/llamafirewall_data_types.py) class).
+
+If no configuration is provided, the default configuration will be used:
+```json
+{
+    "USER": ["PROMPT_GUARD"]
+}
+```
+
+## API Documentation
+
+Once the server is running, you can access:
+- Interactive API documentation (Swagger UI): `http://localhost:8000/docs`
+- Alternative API documentation (ReDoc): `http://localhost:8000/redoc`
+
+## API Endpoints
+
+### POST /scan
+Scan a message for potential security risks.
+
+Request body:
+```json
+{
+    "content": "Your message to scan"
+}
+```
+
+Response:
+```json
+{
+    "is_safe": true,
+    "risk_score": 0.1,
+    "details": {
+        // Additional scan details
+    }
+}
+```
+
+### GET /health
+Health check endpoint to verify the API is running.
+
+Response:
+```json
+{
+    "status": "healthy"
+}
+```
+
+### GET /config
+Get the current scanner configuration.
+
+Response:
+```json
+{
+    "scanners": {
+        "USER": ["PROMPT_GUARD"],
+        "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]
+    }
+}
+```
+
+## Example Usage
+
+Using curl:
+```bash
+# Scan a message
+curl -X POST "http://localhost:8000/scan" \
+     -H "Content-Type: application/json" \
+     -d '{"content": "What is the weather like tomorrow?"}'
+
+# Check current configuration
+curl "http://localhost:8000/config"
+```
+
+Using Python requests:
+```python
+import requests
+
+# Scan a message
+response = requests.post(
+    "http://localhost:8000/scan",
+    json={"content": "What is the weather like tomorrow?"}
+)
+print(response.json())
+
+# Check current configuration
+config = requests.get("http://localhost:8000/config").json()
+print(config)
+``` 
