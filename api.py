@@ -2,10 +2,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanResult
 from typing import Optional, Dict, List
+from openai import AsyncOpenAI
+from concurrent.futures import ThreadPoolExecutor
+from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncio
 import os
 import json
-from openai import OpenAI
+
+# Create thread pool executor at startup
+thread_pool = ThreadPoolExecutor(max_workers=4)
 
 app = FastAPI(
     title="LlamaFirewall API",
@@ -55,30 +60,37 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
         print("Warning: Invalid JSON in LLAMAFIREWALL_SCANNERS, using default configuration")
         return default_config
 
-# Initialize LlamaFirewall with configurable scanners
-llamafirewall = LlamaFirewall(
-    scanners=parse_scanners_config()
-)
+# Cache scanner configuration at startup
+SCANNER_CONFIG = parse_scanners_config()
 
-# Initialize OpenAI client with API key from environment
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+# Initialize LlamaFirewall with cached config
+llamafirewall = LlamaFirewall(scanners=SCANNER_CONFIG)
 
-class ModerationResult(BaseModel):
+# Initialize OpenAI clients with optimized settings
+#client = OpenAI(
+#    api_key=os.getenv("OPENAI_API_KEY", ""),
+#    timeout=30.0,
+#    max_retries=3
+#)
+
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+
+class ModerationResult(BaseModel, frozen=True):
     """Model for a single moderation result."""
     flagged: bool
     categories: Dict[str, bool]
     category_scores: Dict[str, float]
 
-class OpenAIModerationResponse(BaseModel):
+class OpenAIModerationResponse(BaseModel, frozen=True):
     """Model for OpenAI moderation response."""
     id: str
     model: str
     results: List[ModerationResult]
 
-class ScanRequest(BaseModel):
+class ScanRequest(BaseModel, frozen=True):
     content: str
 
-class ScanResponse(BaseModel):
+class ScanResponse(BaseModel, frozen=True):
     """Unified response model for both scan types."""
     is_safe: bool
     risk_score: Optional[float] = None
@@ -86,11 +98,42 @@ class ScanResponse(BaseModel):
     moderation_results: Optional[OpenAIModerationResponse] = None
     scan_type: str
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    reraise=True
+)
+async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
+    """Perform OpenAI moderation with retry logic."""
+    try:
+        response = await async_client.moderations.create(
+            model="omni-moderation-latest",
+            input=content
+        )
+
+        return OpenAIModerationResponse(
+            id=response.id,
+            model=response.model,
+            results=[
+                ModerationResult(
+                    flagged=result.flagged,
+                    categories=result.categories.model_dump(),
+                    category_scores=result.category_scores.model_dump()
+                )
+                for result in response.results
+            ]
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error during OpenAI moderation: {str(e)}"
+        )
+
 @app.post("/scan", response_model=ScanResponse)
 async def scan_message(request: ScanRequest):
     """
     Scan a user message for potential security risks using LlamaFirewall and optionally OpenAI moderation.
-    LlamaFirewall is always used, and OpenAI moderation is added when MODERATION scanner is enabled.
+    LlamaFirewall is always used, and OpenAI moderation is added when moderation=True.
     
     Args:
         request: ScanRequest containing the message content
@@ -99,14 +142,17 @@ async def scan_message(request: ScanRequest):
         ScanResponse containing the scan results and metadata
         
     Raises:
-        HTTPException: If there's an error during scanning or if OpenAI API key is missing when MODERATION is enabled
+        HTTPException: If there's an error during scanning
     """
     try:
         # Always use LlamaFirewall first
         message = UserMessage(content=request.content)
-        loop = asyncio.get_event_loop()
 
-        llama_result = await loop.run_in_executor(None, lambda: llamafirewall.scan(message))
+        # Use thread pool for LlamaFirewall scan
+        llama_result = await asyncio.get_event_loop().run_in_executor(
+            thread_pool,
+            lambda: llamafirewall.scan(message)
+        )
 
         # Initialize response with LlamaFirewall results
         response = ScanResponse(
@@ -118,53 +164,25 @@ async def scan_message(request: ScanRequest):
         
         # Add OpenAI moderation if enabled
         if moderation:
-            if not os.getenv("OPENAI_API_KEY"):
-                raise HTTPException(
-                    status_code=500,
-                    detail="OPENAI_API_KEY environment variable is required when using MODERATION scanner"
-                )
+            # Perform OpenAI moderation asynchronously
+            moderation_response = await perform_openai_moderation(request.content)
 
-            try:
-                openai_response = client.moderations.create(
-                    model="omni-moderation-latest",
-                    input=request.content
-                )
-
-                # Convert OpenAI response to our model
-                moderation_response = OpenAIModerationResponse(
-                    id=openai_response.id,
-                    model=openai_response.model,
-                    results=[
-                        ModerationResult(
-                            flagged=result.flagged,
-                            categories=result.categories.model_dump(),
-                            category_scores=result.category_scores.model_dump()
-                        )
-                        for result in openai_response.results
-                    ]
-                )
-
-                # Update response with moderation results
-                response.moderation_results = moderation_response
-                response.scan_type = "llamafirewall+openai_moderation"
-
-                # Consider message unsafe if either LlamaFirewall or OpenAI flags it
-                if any(result.flagged for result in moderation_response.results):
-                    response.is_safe = False
-                    # Add flagged categories to details
-                    if response.details is None:
-                        response.details = {}
-                    response.details["flagged_categories"] = {
+            # Update response with moderation results
+            response = ScanResponse(
+                is_safe=response.is_safe and not any(r.flagged for r in moderation_response.results),
+                risk_score=response.risk_score,
+                details={
+                    "reason": response.details.get("reason", ""),
+                    "flagged_categories": {
                         category: score
                         for result in moderation_response.results
                         for category, score in result.category_scores.items()
                         if score > 0.5
-                    }
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error during OpenAI moderation: {str(e)}"
-                )
+                    } if any(r.flagged for r in moderation_response.results) else None
+                },
+                moderation_results=moderation_response,
+                scan_type="llamafirewall+openai_moderation"
+            )
         
         return response
 
@@ -196,3 +214,8 @@ async def get_config():
                 config["scanners"][role].append("MODERATION")
 
     return config
+
+# Cleanup on shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    thread_pool.shutdown(wait=True)
