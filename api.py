@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, constr, validator
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanResult
 from typing import Optional, Dict, List
 from openai import AsyncOpenAI
@@ -31,20 +31,29 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     default_config = {
         Role.USER: [ScannerType.PROMPT_GUARD]
     }
-    
+
     config_str = os.getenv("LLAMAFIREWALL_SCANNERS", "{}")
     try:
         # Parse the JSON configuration
         config_dict = json.loads(config_str)
-        
+
+        # Validate configuration structure
+        if not isinstance(config_dict, dict):
+            raise ValueError("Invalid scanner configuration: must be a JSON object")
+
         # Convert string keys to Role enum and string values to ScannerType enum
         scanners = {}
         for role_str, scanner_list in config_dict.items():
+            if not isinstance(scanner_list, list):
+                raise ValueError(f"Invalid scanner list for role {role_str}: must be an array")
+
             try:
                 role = Role[role_str]
                 # Handle MODERATION scanner type separately
                 scanners[role] = []
                 for scanner in scanner_list:
+                    if not isinstance(scanner, str):
+                        raise ValueError(f"Invalid scanner type: {scanner}")
                     if scanner == "MODERATION":
                         # Check if OpenAI API key is configured
                         if not os.getenv("OPENAI_API_KEY"):
@@ -66,13 +75,7 @@ SCANNER_CONFIG = parse_scanners_config()
 # Initialize LlamaFirewall with cached config
 llamafirewall = LlamaFirewall(scanners=SCANNER_CONFIG)
 
-# Initialize OpenAI clients with optimized settings
-#client = OpenAI(
-#    api_key=os.getenv("OPENAI_API_KEY", ""),
-#    timeout=30.0,
-#    max_retries=3
-#)
-
+# Initialize OpenAI client
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 
 class ModerationResult(BaseModel, frozen=True):
@@ -88,7 +91,21 @@ class OpenAIModerationResponse(BaseModel, frozen=True):
     results: List[ModerationResult]
 
 class ScanRequest(BaseModel, frozen=True):
-    content: str
+    """Request model for scanning messages."""
+    content: constr(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
+
+    @validator('content')
+    def validate_content(cls, v):
+        """Validate content for potential security issues."""
+        # Check for common injection patterns
+        injection_patterns = [
+            "<?php", "<script", "javascript:", "data:", "vbscript:",
+            "onerror=", "onload=", "onclick=", "onmouseover="
+        ]
+        for pattern in injection_patterns:
+            if pattern.lower() in v.lower():
+                raise ValueError(f"Content contains potentially unsafe pattern: {pattern}")
+        return v
 
 class ScanResponse(BaseModel, frozen=True):
     """Unified response model for both scan types."""
@@ -126,7 +143,7 @@ async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error during OpenAI moderation: {str(e)}"
+            detail="Error during content moderation"
         )
 
 @app.post("/scan", response_model=ScanResponse)
@@ -189,7 +206,7 @@ async def scan_message(request: ScanRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error scanning message: {str(e)}"
+            detail="Error processing scan request"
         )
 
 @app.get("/health")
