@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, constr, validator
-from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanResult
+from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType
 from typing import Optional, Dict, List
 from openai import AsyncOpenAI
 from concurrent.futures import ThreadPoolExecutor
