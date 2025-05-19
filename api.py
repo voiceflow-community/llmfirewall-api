@@ -9,8 +9,11 @@ import asyncio
 import os
 import json
 
+# Get thread pool configuration from environment
+THREAD_POOL_WORKERS = int(os.getenv("THREAD_POOL_WORKERS", "4"))  # Default to 4 workers if not specified
+
 # Create thread pool executor at startup
-thread_pool = ThreadPoolExecutor(max_workers=4)
+thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
 
 app = FastAPI(
     title="LlamaFirewall API",
