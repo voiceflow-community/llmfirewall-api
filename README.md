@@ -1,8 +1,12 @@
-# LlamaFirewall API
+# LLM Firewall API
 
-A REST API wrapper around LlamaFirewall for scanning user messages for potential security risks.
+An easy-to-use and fast REST API implementing LLM firewalls and framworks for scanning user messages for potential security risks.
 
-For requirements, check the official repository: https://github.com/meta-llama/PurpleLlama/tree/main/LlamaFirewall.
+Protect your LLM applications in seconds by integrating **LLM Firewall API** within your existing application: just deploy the service, let your application points at it and you are done.
+
+Currently supports:
+* [LLamaFirewall](https://github.com/meta-llama/PurpleLlama/tree/main/LlamaFirewall)
+* [openAI Moderation API](https://platform.openai.com/docs/guides/moderation)
 
 Make sure to ask for access to the relevant models here: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M.
 
@@ -83,10 +87,10 @@ cp .env.template .env
 # Edit .env with your configuration
 
 # Build the image
-docker build -t llamafirewall-api .
+docker build -t llmfirewall-api .
 
 # Run the container
-docker run --env-file .env -p 8000:8000 llamafirewall-api
+docker run --env-file .env -p 8000:8000 llmfirewall-api
 ```
 
 ### Production Deployment
