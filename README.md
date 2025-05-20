@@ -33,8 +33,13 @@ HF_TOKEN=your_token_here
 # Together API configuration
 TOGETHER_API_KEY=your_api_key_here
 
+# OpenAI API configuration (required if using MODERATION scanner)
+# Get your key from: https://platform.openai.com/api-keys
+# Your account must be funded to be able to use the moderation endpoint
+OPENAI_API_KEY=your_openai_api_key_here
+
 # Scanner configuration
-LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD"], "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]}
+LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD", "MODERATION", "PII_DETECTION"]}
 
 # Tokenizer configuration
 TOKENIZERS_PARALLELISM=false
@@ -127,8 +132,7 @@ The API allows you to configure which scanners to use for each role through the 
 
 ```json
 {
-    "USER": ["PROMPT_GUARD"],
-    "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]
+    "USER": ["PROMPT_GUARD", "PII_DETECTION"]
 }
 ```
 
@@ -170,8 +174,7 @@ The `MODERATION` scanner will use OpenAI's moderation API to check for:
 Example configuration with both LlamaFirewall and OpenAI moderation:
 ```json
 {
-    "USER": ["PROMPT_GUARD", "MODERATION"],
-    "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION", "MODERATION"]
+    "USER": ["PROMPT_GUARD", "MODERATION", "PII_DETECTION", "MODERATION"]
 }
 ```
 
@@ -249,8 +252,7 @@ Response:
 ```json
 {
     "scanners": {
-        "USER": ["PROMPT_GUARD"],
-        "ASSISTANT": ["PROMPT_GUARD", "PII_DETECTION"]
+        "USER": ["PROMPT_GUARD"]
     }
 }
 ```
