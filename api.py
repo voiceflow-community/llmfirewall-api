@@ -46,7 +46,7 @@ logger.info(f"Initializing thread pool with {THREAD_POOL_WORKERS} workers")
 thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
 
 app = FastAPI(
-    title="LlamaFirewall API",
+    title="LLM Firewall API",
     description="API for scanning user messages using LlamaFirewall and OpenAI moderation",
     version="1.0.0"
 )
