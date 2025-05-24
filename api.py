@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, validator, Field
+from pydantic import BaseModel, Field, field_validator
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
 from typing import Optional, Dict, List
 from openai import AsyncOpenAI
@@ -136,8 +136,9 @@ class ScanRequest(BaseModel, frozen=True):
     """Request model for scanning messages."""
     content: str = Field(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
 
-    @validator('content')
-    def validate_content(cls, v):
+    @field_validator('content')
+    @classmethod
+    def validate_content(cls, v: str) -> str:
         """Validate content for potential security issues."""
         # Check for common injection patterns
         injection_patterns = [
@@ -218,11 +219,18 @@ async def scan_message(request: ScanRequest):
         message = UserMessage(content=request.content)
         logger.debug("Starting LlamaFirewall scan")
 
-        # Use thread pool for LlamaFirewall scan
-        llama_result = await asyncio.get_event_loop().run_in_executor(
-            thread_pool,
-            lambda: llamafirewall.scan(message)
-        )
+        try:
+            # Use thread pool for LlamaFirewall scan
+            llama_result = await asyncio.get_event_loop().run_in_executor(
+                thread_pool,
+                lambda: llamafirewall.scan(message)
+            )
+        except Exception as e:
+            logger.error(f"LlamaFirewall scan failed: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail="LlamaFirewall scanning service unavailable"
+            )
 
         logger.info(f"LlamaFirewall scan result: decision={llama_result.decision}, score={llama_result.score}")
 
@@ -233,38 +241,59 @@ async def scan_message(request: ScanRequest):
             details={"reason": llama_result.reason},
             scan_type="llamafirewall"
         )
-        
+
         # Add OpenAI moderation if enabled
         if moderation:
-            logger.debug("Starting OpenAI moderation")
-            # Perform OpenAI moderation asynchronously
-            moderation_response = await perform_openai_moderation(request.content)
+            try:
+                logger.debug("Starting OpenAI moderation")
+                # Perform OpenAI moderation asynchronously
+                moderation_response = await perform_openai_moderation(request.content)
 
-            # Update response with moderation results
-            response = ScanResponse(
-                is_safe=response.is_safe and not any(r.flagged for r in moderation_response.results),
-                risk_score=response.risk_score,
-                details={
-                    "reason": response.details.get("reason", ""),
-                    "flagged_categories": {
-                        category: score
-                        for result in moderation_response.results
-                        for category, score in result.category_scores.items()
-                        if score > 0.5
-                    } if any(r.flagged for r in moderation_response.results) else None
-                },
-                moderation_results=moderation_response,
-                scan_type="llamafirewall+openai_moderation"
-            )
-            logger.info(f"Final scan result with moderation: is_safe={response.is_safe}")
+                # Update response with moderation results
+                response = ScanResponse(
+                    is_safe=response.is_safe and not any(r.flagged for r in moderation_response.results),
+                    risk_score=response.risk_score,
+                    details={
+                        "reason": response.details.get("reason", ""),
+                        "flagged_categories": {
+                            category: score
+                            for result in moderation_response.results
+                            for category, score in result.category_scores.items()
+                            if score > 0.5
+                        } if any(r.flagged for r in moderation_response.results) else None
+                    },
+                    moderation_results=moderation_response,
+                    scan_type="llamafirewall+openai_moderation"
+                )
+                logger.info(f"Final scan result with moderation: is_safe={response.is_safe}")
+            except HTTPException as e:
+                # Re-raise HTTP exceptions from moderation
+                raise
+            except Exception as e:
+                logger.error(f"OpenAI moderation failed: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail="OpenAI moderation service unavailable"
+                )
 
         return response
 
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except ValueError as e:
+        # Handle validation errors
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error processing scan request: {str(e)}", exc_info=True)
+        # Handle unexpected errors
+        logger.error(f"Unexpected error processing scan request: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail="Error processing scan request"
+            detail="Internal server error during scan processing"
         )
 
 @app.get("/health")
