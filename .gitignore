@@ -48,6 +48,7 @@ venv.bak/
 .settings/
 *.sublime-workspace
 *.sublime-project
+.cursor/
 
 # Docker
 .docker/
