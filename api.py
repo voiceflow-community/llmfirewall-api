@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, constr, validator
+from pydantic import BaseModel, validator, Field
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
 from typing import Optional, Dict, List
 from openai import AsyncOpenAI
@@ -134,7 +134,7 @@ class OpenAIModerationResponse(BaseModel, frozen=True):
 
 class ScanRequest(BaseModel, frozen=True):
     """Request model for scanning messages."""
-    content: constr(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
+    content: str = Field(min_length=1, max_length=10000)  # Constrain content length between 1 and 10000 characters
 
     @validator('content')
     def validate_content(cls, v):
