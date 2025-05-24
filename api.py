@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Pattern
 from openai import AsyncOpenAI
 from concurrent.futures import ThreadPoolExecutor
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -11,6 +11,7 @@ import json
 import logging
 import logging.handlers
 from datetime import datetime
+import re
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -51,6 +52,35 @@ app = FastAPI(
     version="1.1.0"
 )
 
+# Pre-compile regex patterns
+INJECTION_PATTERNS: List[Pattern] = [
+    re.compile(pattern, re.IGNORECASE) for pattern in [
+        r'<\?php',
+        r'<script',
+        r'javascript:',
+        r'data:',
+        r'vbscript:',
+        r'on\w+=',
+        r'exec\s*\(',
+        r'eval\s*\(',
+        r'system\s*\(',
+        r'base64_decode\s*\(',
+        r'from\s+import\s+',
+        r'__import__\s*\(',
+    ]
+]
+
+def sanitize_log_data(data: dict) -> dict:
+    """Sanitize sensitive data for logging."""
+    if not data:
+        return data
+    sanitized = data.copy()
+    sensitive_fields = {'content', 'api_key', 'token', 'error'}
+    for field in sensitive_fields:
+        if field in sanitized:
+            sanitized[field] = '[REDACTED]'
+    return sanitized
+
 def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     """
     Parse scanner configuration from environment variable.
@@ -68,57 +98,67 @@ def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
     config_str = os.getenv("LLAMAFIREWALL_SCANNERS", "{}")
     logger.debug(f"Parsing scanner configuration: {config_str}")
 
+    if "MODERATION" in config_str:
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+        if not openai_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required when using MODERATION scanner")
+        moderation = True
+        logger.info("OpenAI moderation enabled")
+
+    # Parse the JSON configuration
     try:
-        # Parse the JSON configuration
         config_dict = json.loads(config_str)
+    except json.JSONDecodeError as e:
+        logger.error("Invalid JSON in scanner configuration", extra=sanitize_log_data({"error": str(e)}))
+        raise ValueError("Invalid JSON format in scanner configuration") from e
 
-        # Validate configuration structure
-        if not isinstance(config_dict, dict):
-            logger.error("Invalid scanner configuration: must be a JSON object")
-            raise ValueError("Invalid scanner configuration: must be a JSON object")
+    # Validate configuration structure
+    if not isinstance(config_dict, dict):
+        raise ValueError("Invalid scanner configuration: must be a JSON object")
 
-        # Convert string keys to Role enum and string values to ScannerType enum
-        scanners = {}
-        for role_str, scanner_list in config_dict.items():
-            if not isinstance(scanner_list, list):
-                logger.error(f"Invalid scanner list for role {role_str}: must be an array")
-                raise ValueError(f"Invalid scanner list for role {role_str}: must be an array")
+    # Convert string keys to Role enum and string values to ScannerType enum
+    scanners = {}
+    for role_str, scanner_list in config_dict.items():
+        if not isinstance(scanner_list, list):
+            raise ValueError(f"Invalid scanner list for role {role_str}")
 
-            try:
-                role = Role[role_str]
-                # Handle MODERATION scanner type separately
-                scanners[role] = []
-                for scanner in scanner_list:
-                    if not isinstance(scanner, str):
-                        logger.error(f"Invalid scanner type: {scanner}")
-                        raise ValueError(f"Invalid scanner type: {scanner}")
-                    if scanner == "MODERATION":
-                        # Check if OpenAI API key is configured
-                        if not os.getenv("OPENAI_API_KEY"):
-                            logger.error("OPENAI_API_KEY environment variable is required when using MODERATION scanner")
-                            raise ValueError("OPENAI_API_KEY environment variable is required when using MODERATION scanner")
-                        moderation = True
-                        logger.info("OpenAI moderation enabled")
-                    else:
-                        scanners[role].append(ScannerType[scanner])
-            except KeyError as e:
-                logger.error(f"Invalid role or scanner type: {e}")
-                raise ValueError(f"Invalid role or scanner type: {e}")
-        
-        logger.info(f"Scanner configuration loaded: {scanners if scanners else default_config}")
-        return scanners if scanners else default_config
-    except json.JSONDecodeError:
-        logger.warning("Invalid JSON in LLAMAFIREWALL_SCANNERS, using default configuration")
-        return default_config
+        try:
+            role = Role[role_str]
+            scanners[role] = []
+            for scanner in scanner_list:
+                if not isinstance(scanner, str):
+                    raise ValueError(f"Invalid scanner type format: {scanner}")
+                if scanner != "MODERATION":
+                    scanners[role].append(ScannerType[scanner])
+        except KeyError as e:
+            raise ValueError(f"Invalid scanner configuration: {e}")
 
-# Cache scanner configuration at startup
-SCANNER_CONFIG = parse_scanners_config()
+    logger.info("Scanner configuration loaded successfully")
+    return scanners if scanners else default_config
 
-# Initialize LlamaFirewall with cached config
-llamafirewall = LlamaFirewall(scanners=SCANNER_CONFIG)
+# Initialize application with proper error handling
+try:
+    # Cache scanner configuration at startup
+    logger.info("Initializing scanner configuration")
+    SCANNER_CONFIG = parse_scanners_config()
 
-# Initialize OpenAI client
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    # Initialize LlamaFirewall with cached config
+    logger.info("Initializing LlamaFirewall")
+    llamafirewall = LlamaFirewall(scanners=SCANNER_CONFIG)
+
+    # Initialize OpenAI client if moderation is enabled
+    if moderation:
+        logger.info("Initializing OpenAI client")
+        async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    else:
+        async_client = None
+
+except ValueError as e:
+    logger.error(f"Failed to initialize application: {e}", extra=sanitize_log_data({"error": str(e)}))
+    exit(1)
+except Exception as e:
+    logger.error(f"Unexpected error during initialization: {e}", extra=sanitize_log_data({"error": str(e)}))
+    exit(1)
 
 class ModerationResult(BaseModel, frozen=True):
     """Model for a single moderation result."""
@@ -140,14 +180,19 @@ class ScanRequest(BaseModel, frozen=True):
     @classmethod
     def validate_content(cls, v: str) -> str:
         """Validate content for potential security issues."""
-        # Check for common injection patterns
-        injection_patterns = [
-            "<?php", "<script", "javascript:", "data:", "vbscript:",
-            "onerror=", "onload=", "onclick=", "onmouseover="
-        ]
-        for pattern in injection_patterns:
-            if pattern.lower() in v.lower():
-                raise ValueError(f"Content contains potentially unsafe pattern: {pattern}")
+        # Check for injection patterns
+        for pattern in INJECTION_PATTERNS:
+            if pattern.search(v):
+                raise ValueError("Content contains potentially unsafe patterns")
+
+        # Check for excessive whitespace (potential DoS)
+        if len(v.strip()) == 0:
+            raise ValueError("Content cannot be empty or whitespace only")
+
+        # Check for excessive repeated characters (potential DoS)
+        if any(c * 100 in v for c in set(v)):
+            raise ValueError("Content contains excessive repeated characters")
+
         return v
 
 class ScanResponse(BaseModel, frozen=True):
@@ -166,7 +211,7 @@ class ScanResponse(BaseModel, frozen=True):
 async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
     """Perform OpenAI moderation with retry logic."""
     try:
-        logger.debug("Performing OpenAI moderation")
+        logger.debug("Performing OpenAI moderation", extra=sanitize_log_data({"content": content}))
         response = await async_client.moderations.create(
             model="omni-moderation-latest",
             input=content
@@ -186,13 +231,16 @@ async def perform_openai_moderation(content: str) -> OpenAIModerationResponse:
         )
 
         if any(r.flagged for r in result.results):
-            logger.warning(f"Content flagged by OpenAI moderation: {result}")
+            logger.warning("Content flagged by OpenAI moderation", extra=sanitize_log_data({
+                "flagged": True,
+                "categories": {k: v for r in result.results for k, v in r.categories.items() if v}
+            }))
         else:
             logger.debug("Content passed OpenAI moderation")
 
         return result
     except Exception as e:
-        logger.error(f"Error during content moderation: {str(e)}")
+        logger.error("Error during content moderation", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
         raise HTTPException(
             status_code=500,
             detail="Error during content moderation"
@@ -213,7 +261,7 @@ async def scan_message(request: ScanRequest):
     Raises:
         HTTPException: If there's an error during scanning
     """
-    logger.info("Received scan request")
+    logger.info("Received scan request", extra=sanitize_log_data({"content": request.content}))
     try:
         # Always use LlamaFirewall first
         message = UserMessage(content=request.content)
@@ -226,15 +274,19 @@ async def scan_message(request: ScanRequest):
                 lambda: llamafirewall.scan(message)
             )
         except Exception as e:
-            logger.error(f"LlamaFirewall scan failed: {str(e)}", exc_info=True)
+            logger.error("LlamaFirewall scan failed", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
             raise HTTPException(
                 status_code=503,
-                detail="LlamaFirewall scanning service unavailable"
+                detail="Service temporarily unavailable"
             )
 
-        logger.info(f"LlamaFirewall scan result: decision={llama_result.decision}, score={llama_result.score}")
+        # Log sanitized result
+        logger.info("LlamaFirewall scan completed", extra=sanitize_log_data({
+            "decision": llama_result.decision,
+            "score": llama_result.score,
+            "reason": llama_result.reason
+        }))
 
-        # Initialize response with LlamaFirewall results
         response = ScanResponse(
             is_safe=True if llama_result.decision == ScanDecision.ALLOW else False,
             risk_score=llama_result.score,
@@ -242,7 +294,6 @@ async def scan_message(request: ScanRequest):
             scan_type="llamafirewall"
         )
 
-        # Add OpenAI moderation if enabled
         if moderation:
             try:
                 logger.debug("Starting OpenAI moderation")
@@ -265,35 +316,35 @@ async def scan_message(request: ScanRequest):
                     moderation_results=moderation_response,
                     scan_type="llamafirewall+openai_moderation"
                 )
-                logger.info(f"Final scan result with moderation: is_safe={response.is_safe}")
-            except HTTPException as e:
-                # Re-raise HTTP exceptions from moderation
+                logger.info("Moderation scan completed", extra=sanitize_log_data({
+                    "is_safe": response.is_safe,
+                    "flagged_categories": response.details.get("flagged_categories")
+                }))
+            except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"OpenAI moderation failed: {str(e)}", exc_info=True)
+                logger.error("OpenAI moderation failed", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
                 raise HTTPException(
                     status_code=503,
-                    detail="OpenAI moderation service unavailable"
+                    detail="Service temporarily unavailable"
                 )
 
         return response
 
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except ValueError as e:
         # Handle validation errors
-        logger.error(f"Validation error: {str(e)}")
+        logger.error("Validation error", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
         raise HTTPException(
             status_code=400,
-            detail=str(e)
+            detail="Invalid request format"
         )
     except Exception as e:
-        # Handle unexpected errors
-        logger.error(f"Unexpected error processing scan request: {str(e)}", exc_info=True)
+        logger.error("Unexpected error", exc_info=True, extra=sanitize_log_data({"error": str(e)}))
         raise HTTPException(
             status_code=500,
-            detail="Internal server error during scan processing"
+            detail="Internal server error"
         )
 
 @app.get("/health")
