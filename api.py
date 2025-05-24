@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, constr, validator
-from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType
+from llamafirewall import LlamaFirewall, UserMessage, Role, ScannerType, ScanDecision
 from typing import Optional, Dict, List
 from openai import AsyncOpenAI
 from concurrent.futures import ThreadPoolExecutor
@@ -228,7 +228,7 @@ async def scan_message(request: ScanRequest):
 
         # Initialize response with LlamaFirewall results
         response = ScanResponse(
-            is_safe=True if llama_result.decision == "allow" else False,
+            is_safe=True if llama_result.decision == ScanDecision.ALLOW else False,
             risk_score=llama_result.score,
             details={"reason": llama_result.reason},
             scan_type="llamafirewall"
