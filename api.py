@@ -48,7 +48,7 @@ thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
 app = FastAPI(
     title="LLM Firewall API",
     description="API for scanning user messages using LlamaFirewall and OpenAI moderation",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 def parse_scanners_config() -> Dict[Role, List[ScannerType]]:
