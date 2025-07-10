@@ -16,7 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Set HuggingFace cache directory
     HF_HOME=/home/appuser/.cache/huggingface \
     # Default port (can be overridden by environment variable)
-    PORT=8000
+    PORT=8000 \
+    # Default number of workers (can be overridden by environment variable)
+    WORKERS=4
 
 # Create a non-root user and set up permissions
 RUN groupadd -r ${APP_USER} && \
@@ -56,10 +58,10 @@ USER ${APP_USER}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Expose the port the app runs on
-EXPOSE 8000
+# Expose the port the app runs on (default 8000)
+EXPOSE ${PORT}
 
 # Command to run the application with proper signal handling
-CMD sh -c "uvicorn api:app --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 75"
+CMD sh -c "uvicorn api:app --host 0.0.0.0 --port ${PORT} --workers ${WORKERS} --timeout-keep-alive 75"

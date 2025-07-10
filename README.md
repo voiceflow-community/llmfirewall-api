@@ -65,6 +65,10 @@ LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD", "MODERATION", "PII_DETECTION"]}
 # Port configuration (optional, defaults to 8000)
 PORT=8000
 
+# Worker configuration (optional, defaults to 4)
+# Reduce to 1 for single-core systems or resource-constrained environments
+WORKERS=4
+
 # Tokenizer configuration
 TOKENIZERS_PARALLELISM=false
 ```
@@ -146,7 +150,27 @@ For production environments, consider the following:
    - Configure proper logging rotation
    - Set up backup strategies
 
-The API will be available at `http://localhost:8000`
+### Troubleshooting
+
+If you encounter issues with model downloading or child processes dying:
+
+1. **Model Persistence Issues**:
+   - Ensure the Docker volume is properly mounted
+   - Check that the `huggingface_cache` volume has sufficient space
+   - Verify container permissions for the cache directory
+
+2. **Child Process Issues**:
+   - Reduce worker count for resource-constrained environments (set `WORKERS=1` in .env)
+   - Increase memory limits in docker-compose.yml
+   - Check available system resources
+
+3. **Performance Optimization**:
+   - For single-core systems, set `WORKERS=1` in your .env file
+   - Adjust timeout settings based on your model loading time
+   - Monitor container logs for memory/CPU usage patterns
+   - Consider increasing memory limits for model-heavy workloads
+
+The API will be available at `http://localhost:8000` (or your configured PORT)
 
 ## Configuration
 
