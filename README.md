@@ -324,3 +324,6 @@ print(response.json())
 config = requests.get("http://localhost:8000/config").json()
 print(config)
 ```
+
+
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=voiceflow-community_llmfirewall-api&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=voiceflow-community_llmfirewall-api)
