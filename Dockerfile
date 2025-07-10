@@ -18,7 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Default port (can be overridden by environment variable)
     PORT=8000 \
     # Default number of workers (can be overridden by environment variable)
-    WORKERS=4
+    WORKERS=1
 
 # Create a non-root user and set up permissions
 RUN groupadd -r ${APP_USER} && \
