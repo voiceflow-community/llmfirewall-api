@@ -1,5 +1,19 @@
 # LLM Firewall API
 
+## Fork Notice
+
+This repository is a fork of the original [llmfirewall-api](https://github.com/dab-solutions/llmfirewall-api) project.
+
+### Changes Made
+
+This fork includes modifications to the Dockerfile and Docker Compose configuration to:
+- Create a persistent volume for model storage
+- Avoid re-downloading models on each container restart
+- Improve deployment efficiency and reduce startup time
+- Add support for custom PORT configuration
+
+---
+
 An easy-to-use and fast REST API implementing LLM firewalls and framworks for scanning user messages for potential security risks.
 
 Protect your LLM applications in seconds by integrating **LLM Firewall API** within your existing application: just deploy the service, let your application points at it and you are done.
@@ -30,7 +44,9 @@ The API uses a `.env` file for configuration. Create a `.env` file in the projec
 # Make sure you have access to: https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M
 HF_TOKEN=your_token_here
 
-# Together API configuration
+# Together API configuration (optional)
+# Required only if using PII_DETECTION scanner
+# Get your API key from: https://www.together.ai/
 TOGETHER_API_KEY=your_api_key_here
 
 # OpenAI API configuration (required if using MODERATION scanner)
@@ -39,7 +55,15 @@ TOGETHER_API_KEY=your_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
 
 # Scanner configuration
+
+# Default configuration
+LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD"]}
+
+# Example configuration with all scanners
 LLAMAFIREWALL_SCANNERS={"USER": ["PROMPT_GUARD", "MODERATION", "PII_DETECTION"]}
+
+# Port configuration (optional, defaults to 8000)
+PORT=8000
 
 # Tokenizer configuration
 TOKENIZERS_PARALLELISM=false
@@ -76,13 +100,13 @@ cp .env.template .env
 # Edit .env with your configuration
 
 # Start the service
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop the service
-docker-compose down
+docker compose down
 ```
 
 2. Using Docker directly:
@@ -299,4 +323,4 @@ print(response.json())
 # Check current configuration
 config = requests.get("http://localhost:8000/config").json()
 print(config)
-``` 
+```

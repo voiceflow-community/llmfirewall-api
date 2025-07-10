@@ -12,12 +12,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_USER=appuser \
     # Security: Set specific version for pip
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Set HuggingFace cache directory
+    HF_HOME=/home/appuser/.cache/huggingface \
+    # Default port (can be overridden by environment variable)
+    PORT=8000
 
 # Create a non-root user and set up permissions
 RUN groupadd -r ${APP_USER} && \
     useradd -r -g ${APP_USER} -d /app ${APP_USER} && \
-    chown -R ${APP_USER}:${APP_USER} /app
+    # Create HuggingFace cache directory and set permissions
+    mkdir -p /home/appuser/.cache/huggingface && \
+    chown -R ${APP_USER}:${APP_USER} /app /home/appuser/.cache
 
 # Install system dependencies with security updates
 RUN apt-get update && \
@@ -56,4 +62,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Command to run the application with proper signal handling
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75"] 
+CMD sh -c "uvicorn api:app --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 75"

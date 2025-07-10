@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build: .
@@ -7,9 +5,11 @@ services:
     container_name: llamafirewall-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     env_file:
       - .env
+    volumes:
+      - huggingface_cache:/home/appuser/.cache/huggingface
     deploy:
       resources:
         limits:
@@ -19,11 +19,11 @@ services:
           cpus: '0.25'
           memory: 512M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     logging:
       driver: "json-file"
       options:
@@ -40,4 +40,8 @@ services:
 
 networks:
   llamafirewall-net:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  huggingface_cache:
+    driver: local
