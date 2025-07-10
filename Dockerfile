@@ -58,7 +58,7 @@ USER ${APP_USER}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Expose the port the app runs on (default 8000)
 EXPOSE 8000
