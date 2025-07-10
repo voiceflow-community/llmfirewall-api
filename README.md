@@ -154,17 +154,36 @@ For production environments, consider the following:
 
 If you encounter issues with model downloading or child processes dying:
 
-1. **Model Persistence Issues**:
-   - Ensure the Docker volume is properly mounted
-   - Check that the `huggingface_cache` volume has sufficient space
-   - Verify container permissions for the cache directory
+1. **Model Download Issues (Container gets "Killed")**:
+   - **Memory Issue**: The default 1GB memory limit is insufficient for model downloads
+   - **Solution**: Increase memory limits in docker-compose.yml (recommended: 4GB+)
+   - **Check system memory**: Ensure your host has sufficient RAM available
+   - **Monitor during download**: Use `docker stats` to watch memory usage
 
-2. **Child Process Issues**:
-   - Reduce worker count for resource-constrained environments (set `WORKERS=1` in .env)
-   - Increase memory limits in docker-compose.yml
-   - Check available system resources
+2. **Volume Permission Issues**:
+   - Check if the container can write to the cache directory:
+     ```bash
+     docker compose exec api ls -la /home/appuser/.cache/huggingface
+     ```
+   - Verify volume is mounted correctly:
+     ```bash
+     docker volume inspect llmfirewall-api_huggingface_cache
+     ```
 
-3. **Performance Optimization**:
+3. **Network/Download Issues**:
+   - Test HuggingFace connectivity from inside container:
+     ```bash
+     docker compose exec api curl -I https://huggingface.co
+     ```
+   - Verify HF_TOKEN is valid and has access to the model
+
+4. **Debugging Steps**:
+   - Check container logs in real-time: `docker compose logs -f api`
+   - Monitor system resources: `docker stats`
+   - Check host system memory: `free -h`
+   - Inspect volume: `docker volume inspect llmfirewall-api_huggingface_cache`
+
+5. **Performance Optimization**:
    - For single-core systems, set `WORKERS=1` in your .env file
    - Adjust timeout settings based on your model loading time
    - Monitor container logs for memory/CPU usage patterns
